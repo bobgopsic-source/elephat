@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vocabulary PWA v10</title>
+  <meta name="description" content="单词学习PWA应用">
+  <meta name="theme-color" content="#2196f3">
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="css/style.css">
+  <script defer src="js/db.js"></script>
+  <script defer src="js/file-importer.js"></script>
+  <script defer src="js/router.js"></script>
+  <script defer src="js/app.js"></script>
+  <script>
+    // Register Service Worker
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        // Only register if not in preview/iframe environment
+        if (window.location.hostname !== 'www.claudeusercontent.com' && 
+            window.location.hostname !== 'localhost.claudeusercontent.com') {
+          navigator.serviceWorker.register('./sw.js')
+            .then(reg => console.log('✅ Service Worker registered:', reg.scope))
+            .catch(err => console.warn('⚠️ Service Worker registration failed:', err.message));
+        } else {
+          console.log('ℹ️ Service Worker disabled in preview environment');
+        }
+      });
+    }
+  </script>
+</head>
+<body>
+  <div id="page-container"></div>
+  <nav id="bottom-nav">
+    <button id="nav-wordbooks">单词书</button>
+    <button id="nav-settings">设置</button>
+  </nav>
+</body>
+</html>
