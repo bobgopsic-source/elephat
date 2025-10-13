@@ -5,4 +5,4 @@ Vocabulary PWA v10
 - Progress display clickable to jump to a specific index.
 - Buttons show text only (no icons).
 - Info note displayed only on Settings page.
-- No changes to text insertion logic to avoid encoding issues.
+- No changes to text insertion logic to avoid encoding issues.   
