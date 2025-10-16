@@ -1,20 +1,203 @@
+// ==================================================================
+// --- 从 弹跳动画.html 移植过来的 Matter.js 代码 ---
+// ==================================================================
+
+const { Engine, Runner, World, Bodies, Common, Vertices } = Matter;
+
+const PHYSICS_SCALE = 0.6; 
+const RENDER_SCALE = 0.55; 
+const PIXEL_STEP = 6;
+
+let engine;
+let world;
+let runner;
+let emojiShapes = {};
+const activeBodies = []; 
+const fullEmojiList = [
+    '😀', '🤣', '😂', '😍', '🤩', '😘', '😗', '😋', '😜', '🤪', '🤭', '🤫', '😎', '🤓', '🥳', '😈', '💀', '👻', '🤖', '💩', '👋', '👍', '💪', '🧠', '🍎', '🍌', '🍉', '🍕', '🍔', '🎁', '🎈', '🎉', '🎊', '❤️', '🔥', '💧', '☀️', '⚽', '🏀', '💰', '💵', '🔔', '🎤', '🎧'
+];
+let emojiPool = [];
+
+let emojiShapesReady = false;
+
+const hiddenCanvas = document.createElement('canvas');
+hiddenCanvas.width = 128;
+hiddenCanvas.height = 128;
+
+function resetEmojiPool() {
+    emojiPool = Common.shuffle([...fullEmojiList]).slice(0, 30); 
+}
+
+function generateEmojiShapeData(emoji) {
+    const hiddenCtx = hiddenCanvas.getContext('2d');
+    const size = hiddenCanvas.width;
+    
+    hiddenCtx.clearRect(0, 0, size, size);
+    hiddenCtx.font = '100px Arial, sans-serif'; 
+    hiddenCtx.textAlign = 'center';
+    hiddenCtx.textBaseline = 'middle';
+    hiddenCtx.fillText(emoji, size / 2, size / 2 + 10);
+
+    const imageData = hiddenCtx.getImageData(0, 0, size, size);
+    const data = imageData.data;
+    let minX = size, minY = size, maxX = 0, maxY = 0;
+    let foundPixel = false;
+    const boundaryPoints = [];
+
+    for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+            const index = (y * size + x) * 4;
+            if (data[index + 3] > 0) {
+                foundPixel = true;
+                minX = Math.min(minX, x);
+                minY = Math.min(minY, y);
+                maxX = Math.max(maxX, x);
+                maxY = Math.max(maxY, y);
+                
+                if (x % PIXEL_STEP === 0 && y % PIXEL_STEP === 0) {
+                    boundaryPoints.push({ x: x, y: y });
+                }
+            }
+        }
+    }
+
+    if (!foundPixel || boundaryPoints.length < 3) {
+        return { texture: hiddenCanvas, vertices: null, width: 100 * PHYSICS_SCALE, height: 100 * PHYSICS_SCALE };
+    }
+    
+    const trimLeft = minX;
+    const trimTop = minY;
+    const trimWidth = maxX - minX + 1;
+    const trimHeight = maxY - minY + 1;
+    
+    const croppedCanvas = document.createElement('canvas');
+    croppedCanvas.width = trimWidth;
+    croppedCanvas.height = trimHeight;
+    const croppedCtx = croppedCanvas.getContext('2d');
+    croppedCtx.drawImage(hiddenCanvas, trimLeft, trimTop, trimWidth, trimHeight, 0, 0, trimWidth, trimHeight);
+    
+    const hull = Vertices.hull(boundaryPoints);
+    
+    const scaledVertices = hull.map(p => ({
+        x: (p.x - trimLeft - trimWidth / 2) * PHYSICS_SCALE, 
+        y: (p.y - trimTop - trimHeight / 2) * PHYSICS_SCALE
+    }));
+
+    return { texture: croppedCanvas, vertices: scaledVertices, width: trimWidth, height: trimHeight };
+}
+
+function precomputeEmojiShapes() {
+    return new Promise(resolve => {
+        setTimeout(() => { 
+            console.log('正在计算 Emoji 物理形状...');
+            fullEmojiList.forEach(emoji => {
+                emojiShapes[emoji] = generateEmojiShapeData(emoji);
+            });
+            resetEmojiPool();
+            emojiShapesReady = true;
+            console.log('Emoji 物理形状计算完毕!');
+            resolve();
+        }, 10);
+    });
+}
+
+function initPhysics(canvasElement) {
+    const canvas = canvasElement;
+    canvas.width = canvas.offsetWidth;
+    canvas.height = canvas.offsetHeight;
+
+    engine = Engine.create();
+    world = engine.world;
+    world.gravity.y = 1; 
+
+    const wallThickness = 50;
+    const options = { isStatic: true, restitution: 0.8, friction: 0.05, label: 'Wall' };
+
+    World.add(world, [
+        Bodies.rectangle(canvas.width / 2, canvas.height + wallThickness / 2, canvas.width, wallThickness, options),
+        Bodies.rectangle(-wallThickness / 2, canvas.height / 2, wallThickness, canvas.height + wallThickness, options),
+        Bodies.rectangle(canvas.width + wallThickness / 2, canvas.height / 2, wallThickness, canvas.height + wallThickness, options)
+    ]);
+
+    runner = Runner.create({ timeScale: 1.5 });
+    Runner.run(runner, engine);
+    
+    console.log('物理世界就绪!');
+}
+
+function dropEmoji(x) {
+    if (emojiPool.length === 0) resetEmojiPool();
+
+    const emoji = emojiPool.splice(Math.floor(Math.random() * emojiPool.length), 1)[0];
+    const shapeData = emojiShapes[emoji];
+    
+    let body;
+    const commonOptions = {
+        restitution: 0.05, friction: 0.5, density: 0.1, frictionAir: 0.015, 
+        label: emoji, angle: Math.random() * Math.PI * 2,
+    };
+    
+    const physicsHeight = shapeData.height * PHYSICS_SCALE;
+
+    if (shapeData.vertices && shapeData.vertices.length > 2) {
+        body = Bodies.fromVertices(x, -physicsHeight / 2, shapeData.vertices, commonOptions, true);
+    } else {
+        const circleRadius = shapeData.width * PHYSICS_SCALE / 2;
+        body = Bodies.circle(x, -circleRadius, circleRadius, commonOptions);
+    }
+    
+    if (!body) {
+        body = Bodies.circle(x, -50, 25 * PHYSICS_SCALE, commonOptions);
+    }
+
+    World.add(world, body);
+    activeBodies.push(body);
+}
+
+function drawLoop(ctx) {
+    if (!world) return;
+
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+    for (let i = activeBodies.length - 1; i >= 0; i--) {
+        const body = activeBodies[i];
+        if (body.position.y > ctx.canvas.height * 2) {
+            World.remove(world, body);
+            activeBodies.splice(i, 1);
+            continue;
+        }
+        
+        const shapeData = emojiShapes[body.label];
+        if (!shapeData) continue;
+
+        ctx.save();
+        ctx.translate(body.position.x, body.position.y);
+        ctx.rotate(body.angle);
+        const textureWidth = shapeData.width * RENDER_SCALE;
+        const textureHeight = shapeData.height * RENDER_SCALE;
+        ctx.drawImage(shapeData.texture, -textureWidth / 2, -textureHeight / 2, textureWidth, textureHeight);
+        ctx.restore();
+    }
+    
+    requestAnimationFrame(() => drawLoop(ctx));
+}
+
+// ==================================================================
+// --- 移植代码结束 ---
+// ==================================================================
+
+
 function stripBOM(s){ if(!s) return s; return s.replace(/^\uFEFF/, ''); }
 function applySavedFontSize(){ const size = localStorage.getItem('fontSize') || '20'; document.documentElement.style.setProperty('--font-size', size + 'px'); }
 
-// 模态框关闭动画函数 (原有)
 function closeAnimatedModal(modal) {
     modal.classList.add('hide');
-    setTimeout(() => {
-        modal.remove();
-    }, 200); // 200ms 匹配 CSS 中的 0.2s 动画时长
+    setTimeout(() => { modal.remove(); }, 200);
 }
 
-// 主视图（学习页面）关闭动画函数 (已应用到返回按钮)
 function closeLearningViewAnimated(viewElement, callback) {
     viewElement.classList.add('slide-out');
-    setTimeout(() => {
-        callback(); // 触发页面切换（showWordbooks）
-    }, 200);
+    setTimeout(() => { callback(); }, 200);
 }
 
 function saveCurrentState(wordbookId, index){
@@ -34,6 +217,11 @@ window.startLearning = startLearning;
 
 function startLearning(wordbook){ 
   if(!wordbook){ alert('单词书不存在'); return; } 
+  if (!emojiShapesReady) {
+      alert('Emoji 物理形状尚未准备好，请稍候重试。');
+      return;
+  }
+  
   applySavedFontSize(); 
   localStorage.setItem('isLearning', 'true');
   
@@ -41,9 +229,6 @@ function startLearning(wordbook){
   let index = (savedState.wordbookId === wordbook.id) ? savedState.index : 0;
   let showingFront = true;
   const container = document.getElementById('page-container');
-  
-  const emojis = ['😀','😃','😄','😁','😆','😅','🤣','😂','🙂','😊','😇','🥰','😍','🤩','😘','😗','😚','😙','🥲','😋','😛','😜','🤪','😝','🤑','🤗','🤭','🤫','🤔','🤐','🤨','😐','😑','😶','😏','😒','🙄','😬','🤥','😌','😔','😪','🤤','😴','😷','🤒','🤕','🤢','🤮','🤧','🥵','🥶','🥴','😵','🤯','🤠','🥳','🥸','😎','🤓','🧐','😕','😟','🙁','☹️','😮','😯','😲','😳','🥺','😦','😧','😨','😰','😥','😢','😭','😱','😖','😣','😞','😓','😩','😫','🥱','😤','😡','😠','🤬','👍','👎','👌','✌️','🤞','🤟','🤘','🤙','👈','👉','👆','👇','☝️','✋','🤚','🖐','🖖','👋','💪','🦾','🙏','✍️','💅','🤳','💃','🕺','🎉','🎊','🎈','🎁','🏆','🥇','🥈','🥉','⭐','🌟','✨','💫','💥','🔥','💯','❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝'];
-  const emojiObjects = [];
   
   async function checkIfFavorited(word){
     const favId = 'favorites_wordbook';
@@ -123,93 +308,6 @@ function startLearning(wordbook){
     modal.onclick = (e) => { if (e.target === modal) closeAnimatedModal(modal); };
   }
   
-  function createFallingEmoji(){
-    const emojiEnabled = localStorage.getItem('emojiEnabled');
-    if (emojiEnabled === 'false') return;
-    
-    const emoji = emojis[Math.floor(Math.random() * emojis.length)];
-    const emojiEl = document.createElement('div');
-    emojiEl.className = 'falling-emoji';
-    emojiEl.textContent = emoji;
-    emojiEl.style.position = 'fixed';
-    emojiEl.style.fontSize = '32px';
-    emojiEl.style.zIndex = '1000';
-    emojiEl.style.pointerEvents = 'none';
-    emojiEl.style.userSelect = 'none';
-    
-    const cardArea = document.querySelector('.card-wrapper');
-    if (!cardArea) return;
-    
-    const rect = cardArea.getBoundingClientRect();
-    const startX = rect.left + 20 + Math.random() * (rect.width - 60);
-    const startY = rect.top - 50;
-    emojiEl.style.left = startX + 'px';
-    emojiEl.style.top = startY + 'px';
-    document.body.appendChild(emojiEl);
-    
-    const emojiSize = 32;
-    const emojiObj = {element: emojiEl, x: startX, y: startY, vx: (Math.random() - 0.5) * 2, vy: 0, rotation: 0, rotationSpeed: (Math.random() - 0.5) * 8, radius: emojiSize / 2, settled: false};
-    emojiObjects.push(emojiObj);
-    
-    const gravity = 0.6, damping = 0.5, friction = 0.98;
-    const bottomBoundary = rect.bottom - emojiSize / 2;
-    const leftBoundary = rect.left + emojiSize / 2;
-    const rightBoundary = rect.right - emojiSize / 2;
-    
-    function checkCollision(obj1, obj2){
-      const dx = obj1.x - obj2.x, dy = obj1.y - obj2.y;
-      const distance = Math.sqrt(dx * dx + dy * dy);
-      const minDist = obj1.radius + obj2.radius;
-      if (distance < minDist && !obj2.settled){
-        const angle = Math.atan2(dy, dx);
-        const overlap = minDist - distance;
-        obj1.x += Math.cos(angle) * overlap * 0.5;
-        obj1.y += Math.sin(angle) * overlap * 0.5;
-        obj1.vy *= -0.3;
-        return true;
-      }
-      return false;
-    }
-    
-    function animate(){
-      if (!document.body.contains(emojiEl)) return;
-      emojiObj.vy += gravity;
-      emojiObj.x += emojiObj.vx;
-      emojiObj.y += emojiObj.vy;
-      emojiObj.rotation += emojiObj.rotationSpeed;
-      emojiObj.vx *= friction;
-      
-      if (emojiObj.x < leftBoundary){ emojiObj.x = leftBoundary; emojiObj.vx *= -0.5; }
-      if (emojiObj.x > rightBoundary){ emojiObj.x = rightBoundary; emojiObj.vx *= -0.5; }
-      if (emojiObj.y >= bottomBoundary){
-        emojiObj.y = bottomBoundary;
-        emojiObj.vy *= -damping;
-        if (Math.abs(emojiObj.vy) < 0.5 && Math.abs(emojiObj.vx) < 0.3){
-          emojiObj.vy = 0; emojiObj.vx = 0; emojiObj.rotationSpeed *= 0.5; emojiObj.settled = true;
-        }
-      }
-      
-      for (let other of emojiObjects){
-        if (other !== emojiObj && other.settled){ checkCollision(emojiObj, other); }
-      }
-      
-      emojiEl.style.left = emojiObj.x + 'px';
-      emojiEl.style.top = emojiObj.y + 'px';
-      emojiEl.style.transform = `translate(-50%, -50%) rotate(${emojiObj.rotation}deg)`;
-      
-      if (!emojiObj.settled || Math.abs(emojiObj.rotationSpeed) > 0.1){
-        emojiObj.rotationSpeed *= 0.95;
-        requestAnimationFrame(animate);
-      }
-    }
-    requestAnimationFrame(animate);
-  }
-  
-  function clearAllEmojis(){
-    document.querySelectorAll('.falling-emoji').forEach(el => el.remove());
-    emojiObjects.length = 0;
-  }
-  
   async function render(){
     const w = wordbook.words[index] || {word:'', meaning:'', example:'', pronunciation:'', note:''};
     const isFavorited = await checkIfFavorited(w);
@@ -219,15 +317,33 @@ function startLearning(wordbook){
     const cardWrapper = document.createElement('div'); cardWrapper.className='card-wrapper';
     const flip = document.createElement('div'); flip.className='flip-card'; flip.id='flip-card';
     
+    const canvas = document.createElement('canvas');
+    canvas.id = 'physics-canvas';
+    canvas.style.position = 'absolute';
+    canvas.style.top = '0';
+    canvas.style.left = '0';
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    canvas.style.pointerEvents = 'none'; 
+    // ✅ 移除内联 z-index，让 CSS 控制
+    canvas.style.background = 'transparent';
+    canvas.style.border = 'none';
+    canvas.style.outline = 'none';
+
+    flip.appendChild(canvas); 
+    
     const backBtn = document.createElement('button');
     backBtn.className = 'card-top-btn card-top-btn-left';
     backBtn.innerHTML = '←';
     backBtn.title = '返回';
     backBtn.onclick = (e) => {
         e.stopPropagation(); 
-        clearAllEmojis(); 
+        if (runner) Runner.stop(runner);
+        if (world) World.clear(world, false);
+        if (engine) Engine.clear(engine);
+        world = null;
+        activeBodies.length = 0;
         localStorage.removeItem('isLearning'); 
-        // 使用带动画的关闭函数
         closeLearningViewAnimated(wrap, showWordbooks);
     };
     
@@ -252,7 +368,7 @@ function startLearning(wordbook){
         note: () => addNote(w, async () => {await saveWordbook(wordbook); render();}),
         delete: () => deleteWord(async () => {
           wordbook.words.splice(index, 1);
-          if (wordbook.words.length === 0){alert('单词书已空'); clearAllEmojis(); localStorage.removeItem('isLearning'); showWordbooks(); return;}
+          if (wordbook.words.length === 0){alert('单词书已空'); backBtn.click(); return;}
           if (index >= wordbook.words.length) index = 0;
           await saveWordbook(wordbook); saveCurrentState(wordbook.id, index); render();
         })
@@ -264,22 +380,60 @@ function startLearning(wordbook){
     const front = document.createElement('div'); front.className='card-face front visible';
     const back = document.createElement('div'); back.className='card-face back hidden';
     const wordDiv = document.createElement('div'); wordDiv.className='word-text'; wordDiv.textContent = stripBOM(w.word || '');
-    const pron = document.createElement('div'); pron.style.marginTop = '6px'; pron.style.color = '#666'; pron.textContent = stripBOM(w.pronunciation || '');
+    
+    const pron = document.createElement('div'); 
+    pron.className = 'pronunciation-text';
+    pron.textContent = stripBOM(w.pronunciation || '');
+    
     const meaningDiv = document.createElement('div'); meaningDiv.className = 'meaning-text'; meaningDiv.textContent = stripBOM(w.meaning || '');
     const exampleDiv = document.createElement('div'); exampleDiv.className = 'example-text'; exampleDiv.textContent = stripBOM(w.example || '');
     
+    // ✅ 创建顶层文字副本容器
+    const textOverlay = document.createElement('div');
+    textOverlay.className = 'text-overlay';
+    textOverlay.id = 'text-overlay';
+    
+    // 复制正面文字
+    const wordDivCopy = document.createElement('div'); 
+    wordDivCopy.className='word-text'; 
+    wordDivCopy.textContent = stripBOM(w.word || '');
+    const pronCopy = document.createElement('div'); 
+    pronCopy.className = 'pronunciation-text';
+    pronCopy.textContent = stripBOM(w.pronunciation || '');
+    
+    // 复制背面文字
+    const meaningDivCopy = document.createElement('div'); 
+    meaningDivCopy.className = 'meaning-text'; 
+    meaningDivCopy.textContent = stripBOM(w.meaning || '');
+    const exampleDivCopy = document.createElement('div'); 
+    exampleDivCopy.className = 'example-text'; 
+    exampleDivCopy.textContent = stripBOM(w.example || '');
+    
+    flip.appendChild(backBtn); flip.appendChild(topRightButtons);
+    flip.appendChild(front); flip.appendChild(back); 
+    flip.appendChild(textOverlay); // ✅ 添加顶层文字层
+    cardWrapper.appendChild(flip); wrap.appendChild(cardWrapper);
+    
     front.appendChild(wordDiv); if ((w.pronunciation||'').trim()) front.appendChild(pron);
     back.appendChild(meaningDiv); if ((w.example||'').trim()) back.appendChild(exampleDiv);
+    
+    // ✅ 添加文字到顶层（默认显示正面）
+    textOverlay.appendChild(wordDivCopy); 
+    if ((w.pronunciation||'').trim()) textOverlay.appendChild(pronCopy);
     
     if ((w.note || '').trim()){
       const noteDiv = document.createElement('div');
       noteDiv.className = 'note-text';
       noteDiv.textContent = stripBOM(w.note);
       back.appendChild(noteDiv);
+      
+      // ✅ 复制备注到顶层
+      const noteDivCopy = document.createElement('div');
+      noteDivCopy.className = 'note-text';
+      noteDivCopy.textContent = stripBOM(w.note);
+      noteDivCopy.style.display = 'none'; // 默认隐藏
+      textOverlay.appendChild(noteDivCopy);
     }
-    
-    flip.appendChild(backBtn); flip.appendChild(topRightButtons);
-    flip.appendChild(front); flip.appendChild(back); cardWrapper.appendChild(flip); wrap.appendChild(cardWrapper);
     
     const controls = document.createElement('div'); controls.className='controls';
     const prevBtn = document.createElement('button'); prevBtn.textContent = '上一个';
@@ -296,18 +450,39 @@ function startLearning(wordbook){
     controls.appendChild(prevBtn); controls.appendChild(prog); controls.appendChild(nextBtn); wrap.appendChild(controls);
     container.appendChild(wrap);
     
-    flip.onclick = ()=>{
+    initPhysics(canvas);
+    drawLoop(canvas.getContext('2d'));
+
+    flip.onclick = (event)=>{
       if (!wordbook.clickCount) wordbook.clickCount = 0;
       wordbook.clickCount++;
       saveWordbook(wordbook);
-      createFallingEmoji();
+
+      const rect = flip.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      dropEmoji(x); 
+
       if (showingFront){ front.classList.remove('visible'); front.classList.add('hidden'); back.classList.remove('hidden'); back.classList.add('visible'); }
       else { back.classList.remove('visible'); back.classList.add('hidden'); front.classList.remove('hidden'); front.classList.add('visible'); }
       showingFront = !showingFront;
     };
     
-    prevBtn.onclick = ()=>{ clearAllEmojis(); index = (index - 1 + wordbook.words.length) % wordbook.words.length; showingFront = true; saveCurrentState(wordbook.id, index); render(); };
-    nextBtn.onclick = ()=>{ clearAllEmojis(); index = (index + 1) % wordbook.words.length; showingFront = true; saveCurrentState(wordbook.id, index); render(); };
+    prevBtn.onclick = ()=>{ 
+        if (world) World.clear(world, false); 
+        activeBodies.length = 0;
+        index = (index - 1 + wordbook.words.length) % wordbook.words.length; 
+        showingFront = true; 
+        saveCurrentState(wordbook.id, index); 
+        render(); 
+    };
+    nextBtn.onclick = ()=>{ 
+        if (world) World.clear(world, false); 
+        activeBodies.length = 0;
+        index = (index + 1) % wordbook.words.length; 
+        showingFront = true; 
+        saveCurrentState(wordbook.id, index); 
+        render(); 
+    };
     
     let startX = 0;
     flip.addEventListener('touchstart', e=>{ startX = e.touches[0].clientX; });
@@ -318,7 +493,12 @@ function startLearning(wordbook){
   window.addEventListener('storage', (e) => { if (e.key === 'fontSize') applySavedFontSize(); });
 }
 
-window.onload = ()=>{ applySavedFontSize(); showWordbooks(); };
+window.onload = async ()=>{ 
+    applySavedFontSize(); 
+    await precomputeEmojiShapes(); 
+    showWordbooks(); 
+};
+
 function showFontSizeModal(){
     const cur = localStorage.getItem('fontSize') || '20';
     const modal = document.createElement('div');
