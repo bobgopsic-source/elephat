@@ -6,3 +6,4 @@ Vocabulary PWA v10
 - Buttons show text only (no icons).
 - Info note displayed only on Settings page.
 - No changes to text insertion logic to avoid encoding issues.    
+ 
