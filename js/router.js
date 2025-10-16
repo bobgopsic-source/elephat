@@ -63,23 +63,39 @@ async function showWordbookDetail(book){
   document.body.appendChild(modal);
   
   modal.querySelector('#enter-book').onclick = () => { closeAnimatedModal(modal); window.startLearning(book); };
-  modal.querySelector('#rename-book').onclick = () => { closeAnimatedModal(modal); renameWordbook(book, async () => { await saveWordbook(book); showWordbooks(); }); };
-  modal.querySelector('#note-book').onclick = () => { closeAnimatedModal(modal); editWordbookNote(book, async () => { await saveWordbook(book); showWordbookDetail(book); }); };
-  modal.querySelector('#delete-book').onclick = () => { closeAnimatedModal(modal); deleteWordbook(book); };
+  
+  // ✅ 修正：重命名后返回详情页，而不是列表页
+  modal.querySelector('#rename-book').onclick = () => { 
+    closeAnimatedModal(modal); 
+    renameWordbook(book, async () => { 
+      await saveWordbook(book); 
+      showWordbookDetail(book);  // ✅ 修改：返回详情页
+    }); 
+  };
+  
+  modal.querySelector('#note-book').onclick = () => { 
+    closeAnimatedModal(modal); 
+    editWordbookNote(book, async () => { 
+      await saveWordbook(book); 
+      showWordbookDetail(book); 
+    }); 
+  };
+  
+  modal.querySelector('#delete-book').onclick = () => { closeAnimatedModal(modal); deleteWordbookConfirm(book); };
   modal.onclick = (e) => { if (e.target === modal) closeAnimatedModal(modal); };
 }
 
-function deleteWordbook(book){
+// ✅ 重命名为 deleteWordbookConfirm 避免与 db.js 中的 deleteWordbook 冲突
+function deleteWordbookConfirm(book){
   const modal = document.createElement('div');
   modal.className = 'modal-overlay';
   modal.innerHTML = `<div class="modal-content"><h3>确认删除</h3><p>确定要删除单词书"${book.name}"吗？此操作无法撤销。</p><div class="modal-buttons"><button class="modal-btn-cancel">取消</button><button class="modal-btn-confirm modal-btn-danger">删除</button></div></div>`;
   document.body.appendChild(modal);
   modal.querySelector('.modal-btn-cancel').onclick = () => closeAnimatedModal(modal);
   modal.querySelector('.modal-btn-confirm').onclick = async () => {
-    const db = await openDB();
-    const tx = db.transaction('wordbooks', 'readwrite');
-    await tx.objectStore('wordbooks').delete(book.id);
-    closeAnimatedModal(modal); showWordbooks();
+    await window.deleteWordbook(book.id);  // 调用 db.js 中的删除函数
+    closeAnimatedModal(modal); 
+    showWordbooks();
   };
   modal.onclick = (e) => { if (e.target === modal) closeAnimatedModal(modal); };
 }
